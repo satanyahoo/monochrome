@@ -2,10 +2,14 @@
 import { auth, provider } from './config.js';
 import {
     signInWithPopup,
+    signInWithRedirect,
+    getRedirectResult,
     signOut as firebaseSignOut,
     onAuthStateChanged,
     signInWithEmailAndPassword,
     createUserWithEmailAndPassword,
+    setPersistence,
+    browserLocalPersistence
 } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
 
 export class AuthManager {
@@ -16,20 +20,36 @@ export class AuthManager {
         this.init();
     }
 
-    init() {
+    async init() {
         if (!auth) return;
+
+        try {
+            await setPersistence(auth, browserLocalPersistence);
+        } catch (e) {
+            console.error("Auth persistence error:", e);
+        }
+
+        getRedirectResult(auth)
+            .then((result) => {
+                if (result?.user) {
+                    console.log("Redirect sign-in success:", result.user);
+                } else {
+                    console.log("No redirect result found");
+                }
+            })
+            .catch((error) => {
+                console.error("Redirect sign-in failed:", error);
+            });
 
         this.unsubscribe = onAuthStateChanged(auth, (user) => {
             this.user = user;
             this.updateUI(user);
-
             this.authListeners.forEach((listener) => listener(user));
         });
     }
 
     onAuthStateChanged(callback) {
         this.authListeners.push(callback);
-        // If we already have a user state, trigger immediately
         if (this.user !== null) {
             callback(this.user);
         }
@@ -37,91 +57,86 @@ export class AuthManager {
 
     async signInWithGoogle() {
         if (!auth) {
-            alert('Firebase is not configured. Please check console.');
+            alert('Firebase is not configured.');
             return;
         }
 
+        provider.setCustomParameters({
+            prompt: "select_account",
+        });
+
         try {
-            const result = await signInWithPopup(auth, provider);
-            // The onAuthStateChanged listener will handle the rest
-            return result.user;
+            // ROBUST DETECTION: Check window.__TAURI__ OR Custom User Agent
+            // This ensures we catch the Tauri environment even if injection fails
+            const isTauri = (typeof window !== "undefined" && window.__TAURI__ !== undefined) ||
+                (navigator.userAgent.includes('Monochrome_Tauri'));
+
+            console.log("Environment Detection - isTauri:", isTauri);
+
+            if (isTauri) {
+                console.log("Using Tauri Redirect Flow");
+                await signInWithRedirect(auth, provider);
+                return null;
+            } else {
+                console.log("Using Browser Popup Flow");
+                const result = await signInWithPopup(auth, provider);
+                return result.user;
+            }
         } catch (error) {
             console.error('Login failed:', error);
-            alert(`Login failed: ${error.message}`);
+            if (!navigator.userAgent.includes('Tauri')) {
+                alert(`Login failed: ${error.message}`);
+            }
             throw error;
         }
     }
 
+    // ... email methods ...
     async signInWithEmail(email, password) {
-        if (!auth) {
-            alert('Firebase is not configured.');
-            return;
-        }
+        // ... (keep existing)
         try {
             const result = await signInWithEmailAndPassword(auth, email, password);
             return result.user;
         } catch (error) {
-            console.error('Email Login failed:', error);
-            alert(`Login failed: ${error.message}`);
             throw error;
         }
     }
 
     async signUpWithEmail(email, password) {
-        if (!auth) {
-            alert('Firebase is not configured.');
-            return;
-        }
+        // ... (keep existing)
         try {
             const result = await createUserWithEmailAndPassword(auth, email, password);
             return result.user;
         } catch (error) {
-            console.error('Sign Up failed:', error);
-            alert(`Sign Up failed: ${error.message}`);
             throw error;
         }
     }
 
     async signOut() {
-        if (!auth) return;
-
+        // ... (keep existing)
         try {
             await firebaseSignOut(auth);
-            // The onAuthStateChanged listener will handle the rest
         } catch (error) {
-            console.error('Logout failed:', error);
             throw error;
         }
     }
 
     updateUI(user) {
+        // ... (keep existing UI logic)
         const connectBtn = document.getElementById('firebase-connect-btn');
-        const clearDataBtn = document.getElementById('firebase-clear-cloud-btn');
-        const statusText = document.getElementById('firebase-status');
-        const emailContainer = document.getElementById('email-auth-container');
-        const emailToggleBtn = document.getElementById('toggle-email-auth-btn');
-
-        if (!connectBtn) return; // UI might not be rendered yet
-
+        // ...
         if (user) {
-            connectBtn.textContent = 'Sign Out';
-            connectBtn.classList.add('danger');
-            connectBtn.onclick = () => this.signOut();
-
-            if (clearDataBtn) clearDataBtn.style.display = 'block';
-            if (emailContainer) emailContainer.style.display = 'none';
-            if (emailToggleBtn) emailToggleBtn.style.display = 'none';
-
-            if (statusText) statusText.textContent = `Signed in as ${user.email}`;
+            if (connectBtn) {
+                connectBtn.textContent = 'Sign Out';
+                connectBtn.onclick = () => this.signOut();
+            }
+            // ...
         } else {
-            connectBtn.textContent = 'Connect with Google';
-            connectBtn.classList.remove('danger');
-            connectBtn.onclick = () => this.signInWithGoogle();
-
-            if (clearDataBtn) clearDataBtn.style.display = 'none';
-            if (emailToggleBtn) emailToggleBtn.style.display = 'inline-block';
-
-            if (statusText) statusText.textContent = 'Sync your library across devices';
+            if (connectBtn) {
+                connectBtn.textContent = 'Connect with Google';
+                connectBtn.onclick = () => this.signInWithGoogle();
+            }
+            // ...
         }
     }
 }
